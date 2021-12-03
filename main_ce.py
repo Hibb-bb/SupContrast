@@ -16,6 +16,11 @@ from util import adjust_learning_rate, warmup_learning_rate, accuracy
 from util import set_optimizer, save_model
 from networks.resnet_big import SupCEResNet
 
+import wandb
+import os
+
+os.environ["WANDB_SILENT"] = "true"
+
 try:
     import apex
     from apex import amp, optimizers
@@ -111,6 +116,15 @@ def parse_option():
         opt.n_cls = 100
     else:
         raise ValueError('dataset not supported: {}'.format(opt.dataset))
+    
+    config = {
+            "model":opt.model,
+            "dataset":opt.dataset,
+            "lr":opt.learning_rate,
+            "batch_size":opt.batch_size
+            }
+
+    wandb.init(project='SupCE',config=config, entity='hibb')
 
     return opt
 
@@ -304,6 +318,11 @@ def main():
         print('epoch {}, total time {:.2f}'.format(epoch, time2 - time1))
 
         # tensorboard logger
+        wandb.log({
+            "train loss":loss,
+            "train acc":train_acc,
+            "learning rate":optimizer.param_groups[0]['lr']
+            })
         logger.log_value('train_loss', loss, epoch)
         logger.log_value('train_acc', train_acc, epoch)
         logger.log_value('learning_rate', optimizer.param_groups[0]['lr'], epoch)
@@ -312,6 +331,11 @@ def main():
         loss, val_acc = validate(val_loader, model, criterion, opt)
         logger.log_value('val_loss', loss, epoch)
         logger.log_value('val_acc', val_acc, epoch)
+
+        wandb.log({
+            "val loss":loss,
+            "val acc":val_acc
+            })
 
         if val_acc > best_acc:
             best_acc = val_acc

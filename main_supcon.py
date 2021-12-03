@@ -17,6 +17,11 @@ from util import set_optimizer, save_model
 from networks.resnet_big import SupConResNet
 from losses import SupConLoss
 
+import wandb
+import os
+
+os.environ["WANDB_SILENT"] = "true"
+
 try:
     import apex
     from apex import amp, optimizers
@@ -124,6 +129,16 @@ def parse_option():
     opt.save_folder = os.path.join(opt.model_path, opt.model_name)
     if not os.path.isdir(opt.save_folder):
         os.makedirs(opt.save_folder)
+
+    config = {
+            "model":opt.model,
+            "dataset":opt.dataset,
+            "lr":opt.learning_rate,
+            "batch_size":opt.batch_size
+            "method":opt.method
+            }
+
+    wandb.init(project='SupCon_pretrain',config=config, entity='hibb')
 
     return opt
 
@@ -280,6 +295,11 @@ def main():
         # tensorboard logger
         logger.log_value('loss', loss, epoch)
         logger.log_value('learning_rate', optimizer.param_groups[0]['lr'], epoch)
+
+        wandb.log({
+            "loss": loss,
+            "learning rate":optimizer.param_groups[0]['lr']
+            })
 
         if epoch % opt.save_freq == 0:
             save_file = os.path.join(

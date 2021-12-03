@@ -14,6 +14,11 @@ from util import adjust_learning_rate, warmup_learning_rate, accuracy
 from util import set_optimizer
 from networks.resnet_big import SupConResNet, LinearClassifier
 
+import wandb
+import os
+
+os.environ["WANDB_SILENT"] = "true"
+
 try:
     import apex
     from apex import amp, optimizers
@@ -96,6 +101,15 @@ def parse_option():
         opt.n_cls = 100
     else:
         raise ValueError('dataset not supported: {}'.format(opt.dataset))
+
+    config = {
+            "model":opt.model,
+            "dataset":opt.dataset,
+            "lr":opt.learning_rate,
+            "batch_size":opt.batch_size
+            "ckpt":opt.ckpt
+            }
+    wandb.init(project='Linear Finetune',config=config, entity='hibb')
 
     return opt
 
@@ -248,9 +262,20 @@ def main():
         time2 = time.time()
         print('Train epoch {}, total time {:.2f}, accuracy:{:.2f}'.format(
             epoch, time2 - time1, acc))
+        
+        wandb.log({
+            "train loss":loss,
+            "train acc":acc
+            })
 
         # eval for one epoch
         loss, val_acc = validate(val_loader, model, classifier, criterion, opt)
+        
+        wandb.log({
+            "val loss":loss,
+            "val acc":val_acc
+            })
+
         if val_acc > best_acc:
             best_acc = val_acc
 
