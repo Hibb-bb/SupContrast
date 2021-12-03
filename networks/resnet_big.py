@@ -211,21 +211,21 @@ class ALResNet(nn.Module):
         self.y_enc = nn.Embedding(num_classes, feat_dim)
         self.y_dec = nn.Linear(feat_dim, num_classes)
         self.num_classes = num_classes
-        self.one_hot = F.one_hot(torch.arange(0, num_classes), num_classes)
+        self.one_hot = torch.arange(0, num_classes).cuda()
 
     def forward(self, x=None, y=None, mode='ml'):
         assert mode in ['ml', 'warm', 'inf']
         if mode == 'warm':
             y_emb = self.y_enc(y)
             pred = self.y_dec(y_emb)
-            return pred, self.y_enc(self.one_hot)
+            return pred, self.y_enc(self.one_hot.cuda())
 
         elif mode == 'inf':
             return self.y_dec(self.head(self.encoder(x)))
         
         elif mode == 'ml':
             """metric learning"""
-            lab_emb = self.y_enc(self.one_hot)
+            lab_emb = self.y_enc(self.one_hot.cuda())
             x_emb = self.head(self.encoder(x))
             y_emb = self.y_enc(y)
             y_pred = self.y_dec(y_emb)

@@ -17,6 +17,12 @@ from util import set_optimizer, save_model
 from util import create_toy
 from networks.resnet_big import ALResNet
 from losses import MetricLoss
+import numpy as np
+
+import wandb
+import os
+
+os.environ["WANDB_SILENT"] = "true"
 
 try:
     import apex
@@ -52,7 +58,7 @@ def parse_option():
                         help='momentum')
     parser.add_argument('--warm_ae', action='store_true', default=False)
     parser.add_argument('--reg', action='store_true', default=False)
-    parser.add_argument('--freeze', action='store_true', default=True)
+    parser.add_argument('--freeze', action='store_true', default=False)
 
     # model dataset
     parser.add_argument('--model', type=str, default='resnet50')
@@ -64,8 +70,8 @@ def parse_option():
     parser.add_argument('--size', type=int, default=32, help='parameter for RandomResizedCrop')
 
     # method
-    parser.add_argument('--method', type=str, default='SupCon',
-                        choices=['SupCon', 'SimCLR'], help='choose method')
+    parser.add_argument('--method', type=str, default='AL',
+            choices=['SupCon', 'SimCLR', 'AL'],  help='choose method')
 
     # temperature
     parser.add_argument('--temp', type=float, default=0.07,
@@ -100,9 +106,9 @@ def parse_option():
     for it in iterations:
         opt.lr_decay_epochs.append(int(it))
 
-    opt.model_name = '{}_{}_{}_lr_{}_decay_{}_bsz_{}_temp_{}_trial_{}'.\
+    opt.model_name = '{}_{}_{}_lr_{}_decay_{}_bsz_{}_temp_{}_trial_{}_freeze_{}_warmae_{}_reg_{}'.\
         format(opt.method, opt.dataset, opt.model, opt.learning_rate,
-               opt.weight_decay, opt.batch_size, opt.temp, opt.trial)
+               opt.weight_decay, opt.batch_size, opt.temp, opt.trial, opt.freeze, opt.warm_ae, opt.reg)
 
     if opt.cosine:
         opt.model_name = '{}_cosine'.format(opt.model_name)
@@ -124,6 +130,17 @@ def parse_option():
     opt.tb_folder = os.path.join(opt.tb_path, opt.model_name)
     if not os.path.isdir(opt.tb_folder):
         os.makedirs(opt.tb_folder)
+   
+    config = {
+            "model":opt.model,
+            "dataset":opt.dataset,
+            "lr":opt.learning_rate,
+            "batch_size":opt.batch_size,
+            "freeze":opt.freeze,
+            "warm_ae":opt.warm_ae,
+            "orth_reg":opt.reg
+            }
+    wandb.init(project='SupCon_AL',config=config, entity='hibb')
 
     opt.save_folder = os.path.join(opt.model_path, opt.model_name)
     if not os.path.isdir(opt.save_folder):
@@ -243,7 +260,7 @@ def train(train_loader, model, criterion, optimizer, epoch, opt):
         loss = loss_dict['cont_loss']
         if opt.reg:
             loss += loss_dict['reg_loss']
-        if not opt.freeze:
+        if opt.freeze is False:
             loss += loss_dict['ce_loss']
         
         # store loss data
@@ -295,31 +312,35 @@ def main():
 
     # build model and criterion
     model, criterion = set_model(opt)
+    # wandb.watch_model
 
     # build optimizer
     optimizer = set_optimizer(opt, model)
 
     # tensorboard
     logger = tb_logger.Logger(logdir=opt.tb_folder, flush_secs=2)
+    print('logging at', opt.tb_folder)
 
     if opt.warm_ae:
         warm_loader = create_toy()
+        
         for i in range(100):
             for data in warm_loader:
-
+                
                 optimizer.zero_grad()
-                data = data.cuda(non_blocking=True)
+                data = data[0].cuda(non_blocking=True)
                 pred, lab_emb = model(y=data, mode='warm')
                 ce_loss = criterion.ce_loss(pred, data)
-                reg_loss = criterion.reg_loss(lab_emb)
+                reg_loss = criterion.orth_reg(lab_emb)
+                
                 if opt.reg:
                     loss = ce_loss + reg_loss
                 else:
                     loss = ce_loss
                 loss.backward()
                 optimizer.step()
-            logger.log_value('warm_up_ce_loss', ce_loss, i)
-            logger.log_value('warm_up_reg_loss', reg_loss, i)
+            wandb.log({'warm_up_ce_loss':ce_loss})
+            wandb.log({'warm_up_reg_loss':reg_loss})
 
 
     best_acc = -1
@@ -330,15 +351,29 @@ def main():
 
         # train for one epoch
         time1 = time.time()
-        loss = train(train_loader, model, criterion, optimizer, epoch, opt)
+        loss, loss_data = train(train_loader, model, criterion, optimizer, epoch, opt)
         time2 = time.time()
         print('epoch {}, total time {:.2f}'.format(epoch, time2 - time1))
         test_acc = test(test_loader, model)
         
         # tensorboard logger
+        
+        wandb.log({
+            "loss":loss,
+            "reg_loss":np.mean(loss_data['reg_loss']),
+            "ce_loss":np.mean(loss_data['ce_loss']),
+            "cont_loss":np.mean(loss_data['cont_loss']),
+            "learning_rate":optimizer.param_groups[0]['lr'],
+            "test_acc":test_acc*100
+            })
+        '''
         logger.log_value('loss', loss, epoch)
+        logger.log_value('reg_loss', np.mean(loss_data['reg_loss']), epoch)
+        logger.log_value('ce_loss', np.mean(loss_data['ce_loss']), epoch)
+        logger.log_value('cont_loss', np.mean(loss_data['cont_loss']), epoch)
         logger.log_value('learning_rate', optimizer.param_groups[0]['lr'], epoch)
         logger.log_value('test_acc', test_acc, epoch)
+        '''
 
         if test_acc > best_acc:
             best_acc = test_acc

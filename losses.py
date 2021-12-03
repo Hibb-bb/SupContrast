@@ -116,7 +116,7 @@ class MetricLoss(nn.Module):
         """
         
         reg_loss = self.orth_reg(lab_emb)
-        contrastive_loss = self.cont_loss(x_emb, y_emb)
+        contrastive_loss = self.cont_loss(x_emb, y_emb.detach())
         ce_loss = self.ce_loss(y_pred, tgt)
         data = {"reg_loss": reg_loss, "cont_loss":contrastive_loss, "ce_loss":ce_loss}
         return data
