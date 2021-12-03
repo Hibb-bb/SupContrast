@@ -140,7 +140,7 @@ def parse_option():
             "warm_ae":opt.warm_ae,
             "orth_reg":opt.reg
             }
-    wandb.init(project='SupCon_AL',config=config, entity='hibb')
+    wandb.init(project='SupCon_AL',config=config, entity='al-train')
 
     opt.save_folder = os.path.join(opt.model_path, opt.model_name)
     if not os.path.isdir(opt.save_folder):
@@ -349,6 +349,11 @@ def main():
             wandb.log({'warm_up_ce_loss':ce_loss})
             wandb.log({'warm_up_reg_loss':reg_loss})
 
+    if opt.freeze == True:
+        for param in model.y_enc.parameters():
+            param.requires_grad = False
+        for param in model.y_dec.parameters():
+            param.requires_grad = False
 
     best_acc = -1
 

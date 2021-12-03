@@ -124,7 +124,7 @@ def parse_option():
             "batch_size":opt.batch_size
             }
 
-    wandb.init(project='SupCE',config=config, entity='hibb')
+    wandb.init(project='SupCE',config=config, entity='al-train')
 
     return opt
 

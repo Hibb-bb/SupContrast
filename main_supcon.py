@@ -138,7 +138,7 @@ def parse_option():
             "method":opt.method
             }
 
-    wandb.init(project='SupCon_pretrain',config=config, entity='hibb')
+    wandb.init(project='SupCon_pretrain',config=config, entity='al-train')
 
     return opt
 

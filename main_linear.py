@@ -109,7 +109,7 @@ def parse_option():
             "batch_size":opt.batch_size
             "ckpt":opt.ckpt
             }
-    wandb.init(project='Linear Finetune',config=config, entity='hibb')
+    wandb.init(project='Linear Finetune',config=config, entity='al-train')
 
     return opt
 
