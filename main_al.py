@@ -14,7 +14,7 @@ from torchvision import transforms, datasets
 from util import TwoCropTransform, AverageMeter
 from util import adjust_learning_rate, warmup_learning_rate
 from util import set_optimizer, save_model
-from util import create_toy
+from util import create_toy, accuracy
 from networks.resnet_big import ALResNet
 from losses import MetricLoss
 import numpy as np
@@ -296,13 +296,20 @@ def test(test_loader, model):
     """test data"""
     model.eval()
     total_correct, total_sample = 0,0
+    top1, top5 = [], []
+
     for idx, (images, labels) in enumerate(test_loader):
         images, labels = images.cuda(), labels.cuda()
         with torch.no_grad():
             pred = model(images, mode='inf')
+        acc1, acc5 = accuracy(pred, labels, topk=(1,5))
+        top1.append(acc1[0].item())
+        top5.append(acc5[0].item())
+        # raise Exception('acc')
         total_correct += (pred.argmax(-1) == labels).sum().item()
         total_sample += images.size(0)
-    return total_correct/total_sample
+    
+    return total_correct/total_sample, np.mean(top1), np.mean(top5)
 
 def main():
     opt = parse_option()
@@ -354,7 +361,7 @@ def main():
         loss, loss_data = train(train_loader, model, criterion, optimizer, epoch, opt)
         time2 = time.time()
         print('epoch {}, total time {:.2f}'.format(epoch, time2 - time1))
-        test_acc = test(test_loader, model)
+        test_acc, top1, top5 = test(test_loader, model)
         
         # tensorboard logger
         
@@ -364,7 +371,9 @@ def main():
             "ce_loss":np.mean(loss_data['ce_loss']),
             "cont_loss":np.mean(loss_data['cont_loss']),
             "learning_rate":optimizer.param_groups[0]['lr'],
-            "test_acc":test_acc*100
+            "test_acc":test_acc*100,
+            "test top1":top1,
+            "test top5":top5
             })
         '''
         logger.log_value('loss', loss, epoch)
