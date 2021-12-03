@@ -197,6 +197,39 @@ class SupCEResNet(nn.Module):
     def forward(self, x):
         return self.fc(self.encoder(x))
 
+class ALResNet(nn.Module):
+    def __init__(self, name='resnet50', num_classes=10, feat_dim=128):
+        super(ALResNet, self).__init__()
+        model_fun, dim_in = model_dict[name]
+        self.encoder = model_fun()
+        self.fc = nn.Linear(dim_in, num_classes)
+        self.head = nn.Sequential(
+            nn.Linear(dim_in, dim_in),
+            nn.ReLU(inplace=True),
+            nn.Linear(dim_in, feat_dim)
+        )
+        self.y_enc = nn.Embedding(num_classes, feat_dim)
+        self.y_dec = nn.Linear(feat_dim, num_classes)
+        self.num_classes = num_classes
+        self.one_hot = F.one_hot(torch.arange(0, num_classes), num_classes)
+
+    def forward(self, x=None, y=None, mode='ml'):
+        assert mode in ['ml', 'warm', 'inf']
+        if mode == 'warm':
+            y_emb = self.y_enc(y)
+            pred = self.y_dec(y_emb)
+            return pred, self.y_enc(self.one_hot)
+
+        elif mode == 'inf':
+            return self.y_dec(self.head(self.encoder(x)))
+        
+        elif mode == 'ml':
+            """metric learning"""
+            lab_emb = self.y_enc(self.one_hot)
+            x_emb = self.head(self.encoder(x))
+            y_emb = self.y_enc(y)
+            y_pred = self.y_dec(y_emb)
+            return x_emb, y_emb, y_pred, lab_emb
 
 class LinearClassifier(nn.Module):
     """Linear classifier"""

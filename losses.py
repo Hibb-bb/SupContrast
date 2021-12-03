@@ -6,7 +6,7 @@ from __future__ import print_function
 
 import torch
 import torch.nn as nn
-
+import torch.nn.functional as F
 
 class SupConLoss(nn.Module):
     """Supervised Contrastive Learning: https://arxiv.org/pdf/2004.11362.pdf.
@@ -96,3 +96,45 @@ class SupConLoss(nn.Module):
         loss = loss.view(anchor_count, batch_size).mean()
 
         return loss
+
+class MetricLoss(nn.Module):
+    def __init__(self, temperature=0.07, base_temperature=0.07, reg=False):
+        super(MetricLoss, self).__init__()
+
+        self.temperature = temperature
+        self.base_temperature = base_temperature
+        self.reg = reg
+
+    def forward(self, x_emb, y_emb, y_pred, lab_emb, tgt):
+
+        """
+        x_emb:      [batch_size, proj_size]
+        y_emb:      [batch_size, proj_size]
+        y_pred:     [batch_size, num_classes]
+        lab_emb:    [num_classes, proj_size]
+        tgt:        [batch_size]
+        """
+        
+        reg_loss = self.orth_reg(lab_emb)
+        contrastive_loss = self.cont_loss(x_emb, y_emb)
+        ce_loss = self.ce_loss(y_pred, tgt)
+        data = {"reg_loss": reg_loss, "cont_loss":contrastive_loss, "ce_loss":ce_loss}
+        return data
+
+    def orth_reg(self, inp):
+        
+        norm_x = F.normalize(inp, dim=-1)
+        mask =  (1-torch.eye(norm_x.size(0))).to(norm_x.device)
+        y = torch.matmul(norm_x, norm_x.T) + 1
+        y = (y*mask).mean().mean()
+        return y
+
+    def cont_loss(self, x, y):
+        
+        x = F.normalize(x, dim=-1)
+        y = F.normalize(y, dim=-1)
+        tgt = torch.ones(x.size(0), device=x.device)
+        return F.cosine_embedding_loss(x, y.detach(), tgt)
+
+    def ce_loss(self, pred, tgt):
+        return F.cross_entropy(pred, tgt)

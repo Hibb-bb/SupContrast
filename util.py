@@ -5,6 +5,12 @@ import numpy as np
 import torch
 import torch.optim as optim
 
+from torch.utils.data import TensorDataset, DataLoader
+
+def create_toy(num_classes=10):
+    labels = torch.arange(0, num_classes)
+    dataset = TensorDataset(labels)
+    return DataLoader(dataset, batch_size=num_classes)
 
 class TwoCropTransform:
     """Create two crops of the same image"""
