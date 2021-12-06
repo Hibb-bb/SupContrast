@@ -202,34 +202,41 @@ class ALResNet(nn.Module):
         super(ALResNet, self).__init__()
         model_fun, dim_in = model_dict[name]
         self.encoder = model_fun()
-        self.fc = nn.Linear(dim_in, num_classes)
+        # self.fc = nn.Linear(dim_in, num_classes)
         self.head = nn.Sequential(
             nn.Linear(dim_in, dim_in),
             nn.ReLU(inplace=True),
             nn.Linear(dim_in, feat_dim)
         )
-        self.y_enc = nn.Embedding(num_classes, feat_dim)
+        # self.y_enc = nn.Embedding(num_classes, feat_dim)
+        self.y_enc = nn.Linear(num_classes, feat_dim, bias=False)
         self.y_dec = nn.Linear(feat_dim, num_classes)
         self.num_classes = num_classes
-        self.one_hot = torch.arange(0, num_classes).cuda()
+        self.one_hot = F.one_hot(torch.arange(0, num_classes), num_classes=num_classes).float().cuda()
 
     def forward(self, x=None, y=None, mode='ml'):
         assert mode in ['ml', 'warm', 'inf']
         if mode == 'warm':
+            y = F.one_hot(y).float().cuda()
             y_emb = self.y_enc(y)
+            # print(y_emb.shape)
             pred = self.y_dec(y_emb)
-            return pred, self.y_enc(self.one_hot.cuda())
+            return pred, self.y_enc.weight
+            # return pred, self.y_enc(self.one_hot.cuda())
 
         elif mode == 'inf':
             return self.y_dec(self.head(self.encoder(x)))
         
         elif mode == 'ml':
             """metric learning"""
-            lab_emb = self.y_enc(self.one_hot.cuda())
+            
+            y = F.one_hot(y).float().cuda()
+            lab_emb = self.y_enc(self.one_hot)
             x_emb = self.head(self.encoder(x))
-            y_emb = self.y_enc(y)
-            y_pred = self.y_dec(y_emb)
-            return x_emb, y_emb, y_pred, lab_emb
+            y_emb = self.y_enc(y).detach()
+            y_pred = self.y_dec(lab_emb)
+            
+            return x_emb, y_emb, y_pred, self.y_enc.weight
 
 class LinearClassifier(nn.Module):
     """Linear classifier"""

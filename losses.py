@@ -105,6 +105,7 @@ class MetricLoss(nn.Module):
         self.base_temperature = base_temperature
         self.reg = reg
         self.drop_p = dropout
+        self.cri = nn.BCELoss()
 
     def forward(self, x_emb, y_emb, y_pred, lab_emb, tgt):
 
@@ -123,19 +124,15 @@ class MetricLoss(nn.Module):
         return data
 
     def orth_reg(self, w):
-        w = torch.transpose(w, 1, 0)
+    
+        w = torch.transpose(w, 1,0)
         bsz = w.size(0)
-        w = F.normalize(w, dim=-1)
+        label = torch.arange(0, w.size(0)).to(w.device)
+        mask = torch.eye(bsz).to(w.device)
         prod = torch.matmul(w, w.T)
-        mask = 1-torch.eye(bsz).to(prod.device)
-        prod = prod*mask
-        prod = 1 - prod
-        scale = bsz*bsz - bsz
-        prod = prod.sum().sum() / scale
-        prod = 1 - prod
-        return prod
-
-
+        reg_loss = F.cross_entropy(prod, label)
+        return reg_loss
+    
     def cont_loss(self, x, y):
         
         x = F.dropout(F.normalize(x, dim=-1), self.drop_p)
