@@ -98,43 +98,51 @@ class SupConLoss(nn.Module):
         return loss
 
 class MetricLoss(nn.Module):
-    def __init__(self, temperature=0.07, base_temperature=0.07, reg=False):
+    def __init__(self, temperature=0.07, base_temperature=0.07, reg=False, dropout=0.1):
         super(MetricLoss, self).__init__()
 
         self.temperature = temperature
         self.base_temperature = base_temperature
         self.reg = reg
+        self.drop_p = dropout
 
     def forward(self, x_emb, y_emb, y_pred, lab_emb, tgt):
 
         """
         x_emb:      [batch_size, proj_size]
         y_emb:      [batch_size, proj_size]
-        y_pred:     [batch_size, num_classes]
+        y_pred:     [num_classes, num_classes]
         lab_emb:    [num_classes, proj_size]
         tgt:        [batch_size]
         """
         
         reg_loss = self.orth_reg(lab_emb)
         contrastive_loss = self.cont_loss(x_emb, y_emb.detach())
-        ce_loss = self.ce_loss(y_pred, tgt)
+        ce_loss = self.ce_loss(y_pred)
         data = {"reg_loss": reg_loss, "cont_loss":contrastive_loss, "ce_loss":ce_loss}
         return data
 
-    def orth_reg(self, inp):
-        
-        norm_x = F.normalize(inp, dim=-1)
-        mask =  (1-torch.eye(norm_x.size(0))).to(norm_x.device)
-        y = torch.matmul(norm_x, norm_x.T) + 1
-        y = (y*mask).mean().mean()
-        return y
+    def orth_reg(self, w):
+        w = torch.transpose(w, 1, 0)
+        bsz = w.size(0)
+        w = F.normalize(w, dim=-1)
+        prod = torch.matmul(w, w.T)
+        mask = 1-torch.eye(bsz).to(prod.device)
+        prod = prod*mask
+        prod = 1 - prod
+        scale = bsz*bsz - bsz
+        prod = prod.sum().sum() / scale
+        prod = 1 - prod
+        return prod
+
 
     def cont_loss(self, x, y):
         
-        x = F.normalize(x, dim=-1)
-        y = F.normalize(y, dim=-1)
+        x = F.dropout(F.normalize(x, dim=-1), self.drop_p)
+        y = F.dropout(F.normalize(y, dim=-1), self.drop_p)
         tgt = torch.ones(x.size(0), device=x.device)
         return F.cosine_embedding_loss(x, y.detach(), tgt)
 
-    def ce_loss(self, pred, tgt):
+    def ce_loss(self, pred):
+        tgt = torch.arange(0, pred.size(-1), device=pred.device)
         return F.cross_entropy(pred, tgt)

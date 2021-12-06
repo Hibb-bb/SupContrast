@@ -57,7 +57,7 @@ def parse_option():
     parser.add_argument('--momentum', type=float, default=0.9,
                         help='momentum')
     parser.add_argument('--warm_ae', action='store_true', default=False)
-    parser.add_argument('--reg', action='store_true', default=False)
+    parser.add_argument('--reg', type=float, default=0.0)
     parser.add_argument('--freeze', action='store_true', default=False)
 
     # model dataset
@@ -88,6 +88,11 @@ def parse_option():
                         help='id for recording multiple runs')
 
     opt = parser.parse_args()
+    
+    print('opts:')
+    print('reg', opt.reg)
+    print('freeze', opt.freeze)
+    print('warm ae', opt.warm_ae)
 
     # check if dataset is path that passed required arguments
     if opt.dataset == 'path':
@@ -257,9 +262,8 @@ def train(train_loader, model, criterion, optimizer, epoch, opt):
         x_emb, y_emb, y_pred, lab_emb = model(images, labels, mode='ml')
 
         loss_dict = criterion(x_emb, y_emb, y_pred, lab_emb, labels)
-        loss = loss_dict['cont_loss']
-        if opt.reg:
-            loss += loss_dict['reg_loss']
+        loss = (1-opt.reg)*loss_dict['cont_loss']
+        loss += opt.reg*loss_dict['reg_loss']
         if opt.freeze is False:
             loss += loss_dict['ce_loss']
         
@@ -331,19 +335,16 @@ def main():
     if opt.warm_ae:
         warm_loader = create_toy()
         
-        for i in range(100):
+        for i in range(5000):
             for data in warm_loader:
                 
                 optimizer.zero_grad()
                 data = data[0].cuda(non_blocking=True)
                 pred, lab_emb = model(y=data, mode='warm')
-                ce_loss = criterion.ce_loss(pred, data)
+                ce_loss = criterion.ce_loss(pred)
                 reg_loss = criterion.orth_reg(lab_emb)
-                
-                if opt.reg:
-                    loss = ce_loss + reg_loss
-                else:
-                    loss = ce_loss
+                loss = ce_loss + opt.reg*reg_loss
+
                 loss.backward()
                 optimizer.step()
             wandb.log({'warm_up_ce_loss':ce_loss})
@@ -355,7 +356,7 @@ def main():
         for param in model.y_dec.parameters():
             param.requires_grad = False
 
-    best_acc = -1
+    best_acc, best_epoch = -1, 0
 
     # training routine
     for epoch in range(1, opt.epochs + 1):
@@ -391,6 +392,7 @@ def main():
 
         if test_acc > best_acc:
             best_acc = test_acc
+            best_epoch = epoch
             save_file = os.path.join(
                 opt.save_folder, 'ckpt_epoch_{epoch}.pth'.format(epoch=epoch))
             save_model(model, optimizer, opt, epoch, save_file)
@@ -399,7 +401,8 @@ def main():
     save_file = os.path.join(
         opt.save_folder, 'last.pth')
     save_model(model, optimizer, opt, opt.epochs, save_file)
-
+    print('best acc', best_acc)
+    print('best epoch', best_epoch)
 
 if __name__ == '__main__':
     main()

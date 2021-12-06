@@ -339,6 +339,7 @@ def main():
 
         if val_acc > best_acc:
             best_acc = val_acc
+            best_epoch = epoch
 
         if epoch % opt.save_freq == 0:
             save_file = os.path.join(
@@ -351,7 +352,7 @@ def main():
     save_model(model, optimizer, opt, opt.epochs, save_file)
 
     print('best accuracy: {:.2f}'.format(best_acc))
-
+    print('best epoch', best_epoch)
 
 if __name__ == '__main__':
     main()
