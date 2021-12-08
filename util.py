@@ -7,13 +7,16 @@ import torch.optim as optim
 
 from torch.utils.data import TensorDataset, DataLoader
 
+
 def create_toy(num_classes=10):
     labels = torch.arange(0, num_classes)
     dataset = TensorDataset(labels)
     return DataLoader(dataset, batch_size=num_classes)
 
+
 class TwoCropTransform:
     """Create two crops of the same image"""
+
     def __init__(self, transform):
         self.transform = transform
 
@@ -23,6 +26,7 @@ class TwoCropTransform:
 
 class AverageMeter(object):
     """Computes and stores the average and current value"""
+
     def __init__(self):
         self.reset()
 
@@ -37,6 +41,42 @@ class AverageMeter(object):
         self.sum += val * n
         self.count += n
         self.avg = self.sum / self.count
+
+
+class Regularizers(object):
+
+    def __init__(self, coef=1.0) -> None:
+        super(Regularizers, self).__init__()
+
+        self.coef = coef
+
+    def so(self, weights):
+
+        # w.size = (m', n)
+        w = weights
+
+        mat = torch.matmul(w.T, w)
+        # n-dim identity
+        mat -= torch.eye(w.size(1))
+
+        return self.coef * mat.pow(2.0).sum()
+
+    def dso(self, weights):
+
+        # w.size = (m', n)
+        w = weights
+
+        if w.size(0) >= w.size(1):
+
+            return self.so(w)
+
+        else:
+
+            mat = torch.matmul(w, w.T)
+            # m'-dim identity
+            mat -= torch.eye(w.size(0))
+
+            return self.coef * mat.pow(2.0).sum()
 
 
 def accuracy(output, target, topk=(1,)):
@@ -62,7 +102,7 @@ def adjust_learning_rate(args, optimizer, epoch):
     if args.cosine:
         eta_min = lr * (args.lr_decay_rate ** 3)
         lr = eta_min + (lr - eta_min) * (
-                1 + math.cos(math.pi * epoch / args.epochs)) / 2
+            1 + math.cos(math.pi * epoch / args.epochs)) / 2
     else:
         steps = np.sum(epoch > np.asarray(args.lr_decay_epochs))
         if steps > 0:
