@@ -98,7 +98,7 @@ class SupConLoss(nn.Module):
         return loss
 
 class MetricLoss(nn.Module):
-    def __init__(self, temperature=0.07, base_temperature=0.07, reg=False, dropout=0.1):
+    def __init__(self, temperature=0.07, base_temperature=0.07, reg=False, dropout=0.1, mode='orth'):
         super(MetricLoss, self).__init__()
 
         self.temperature = temperature
@@ -106,6 +106,7 @@ class MetricLoss(nn.Module):
         self.reg = reg
         self.drop_p = dropout
         self.cri = nn.BCELoss()
+        self.mode = mode
 
     def forward(self, x_emb, y_emb, y_pred, lab_emb, tgt):
 
@@ -116,8 +117,13 @@ class MetricLoss(nn.Module):
         lab_emb:    [num_classes, proj_size]
         tgt:        [batch_size]
         """
-        
-        reg_loss = self.orth_reg(lab_emb)
+        if self.mode == 'orth':
+            reg_loss = self.orth_reg(lab_emb)
+        elif self.mode = 'unif':
+            reg_loss = self.unif_reg(lab_emb)
+        elif self.mode = 'l2_reg_ortho':
+            reg_loss = self.l2_reg_ortho(lab_emb)
+
         contrastive_loss = self.cont_loss(x_emb, y_emb.detach())
         ce_loss = self.ce_loss(y_pred)
         data = {"reg_loss": reg_loss, "cont_loss":contrastive_loss, "ce_loss":ce_loss}
@@ -143,3 +149,28 @@ class MetricLoss(nn.Module):
     def ce_loss(self, pred):
         tgt = torch.arange(0, pred.size(-1), device=pred.device)
         return F.cross_entropy(pred, tgt)
+
+    def unif_reg(self, x):
+        x = torch.transpose(x, 1,0)
+        x = F.normalize(x, dim=-1)
+        return torch.pdist(x, p=2).pow(2).mul(-t).exp().mean().log()
+
+    def l2_reg_ortho(self, W):
+
+	l2_reg = None
+        W = torch.transpose(W, 1,0)
+        cols, rows = W.shape
+        w1 = W.view(-1,cols)
+        wt = torch.transpose(w1,0,1)
+        m  = torch.matmul(wt,w1)
+        ident = Variable(torch.eye(cols,cols))
+        ident = ident.cuda()
+        w_tmp = (m - ident)
+        height = w_tmp.size(0)
+        u = F.normalize(w_tmp.new_empty(height).normal_(0,1), dim=0, eps=1e-12)
+        v = F.normalize(torch.matmul(w_tmp.t(), u), dim=0, eps=1e-12)
+        u = F.normalize(torch.matmul(w_tmp, v), dim=0, eps=1e-12)
+        sigma = torch.dot(u, torch.matmul(w_tmp, v))
+
+        l2_reg = (sigma)**2
+	return l2_reg

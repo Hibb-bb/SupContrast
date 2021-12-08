@@ -134,7 +134,7 @@ def parse_option():
             "model":opt.model,
             "dataset":opt.dataset,
             "lr":opt.learning_rate,
-            "batch_size":opt.batch_size
+            "batch_size":opt.batch_size,
             "method":opt.method
             }
 
