@@ -51,32 +51,19 @@ class Regularizers(object):
         self.coef = coef
 
     def so(self, weights):
-
+        """soft orthogonality regularization"""
         # w.size = (m', n)
         w = weights
-
         mat = torch.matmul(w.T, w)
         # n-dim identity
-        mat -= torch.eye(w.size(1))
+        mat -= torch.eye(w.size(-1))
 
-        return self.coef * mat.pow(2.0).sum()
+        return self.coef * mat**2
 
     def dso(self, weights):
-
-        # w.size = (m', n)
+        """double soft orthogonality regularization"""
         w = weights
-
-        if w.size(0) >= w.size(1):
-
-            return self.so(w)
-
-        else:
-
-            mat = torch.matmul(w, w.T)
-            # m'-dim identity
-            mat -= torch.eye(w.size(0))
-
-            return self.coef * mat.pow(2.0).sum()
+        return self.so(w) + self.so(w.T)
 
 
 def accuracy(output, target, topk=(1,)):
