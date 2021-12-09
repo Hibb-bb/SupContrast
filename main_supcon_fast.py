@@ -14,10 +14,8 @@ from torchvision import transforms, datasets
 from util import TwoCropTransform, AverageMeter
 from util import adjust_learning_rate, warmup_learning_rate
 from util import set_optimizer, save_model
-from util import create_toy, accuracy
-from networks.resnet_big import ALResNet
-from losses import MetricLoss
-import numpy as np
+from networks.resnet_fast import SupConResNet
+from losses import SupConLoss
 
 import wandb
 import os
@@ -56,9 +54,6 @@ def parse_option():
                         help='weight decay')
     parser.add_argument('--momentum', type=float, default=0.9,
                         help='momentum')
-    parser.add_argument('--warm_ae', action='store_true', default=False)
-    parser.add_argument('--reg', type=float, default=0.0)
-    parser.add_argument('--freeze', action='store_true', default=False)
 
     # model dataset
     parser.add_argument('--model', type=str, default='resnet50')
@@ -70,8 +65,8 @@ def parse_option():
     parser.add_argument('--size', type=int, default=32, help='parameter for RandomResizedCrop')
 
     # method
-    parser.add_argument('--method', type=str, default='AL',
-            choices=['SupCon', 'SimCLR', 'AL'],  help='choose method')
+    parser.add_argument('--method', type=str, default='SupCon',
+                        choices=['SupCon', 'SimCLR'], help='choose method')
 
     # temperature
     parser.add_argument('--temp', type=float, default=0.07,
@@ -86,15 +81,8 @@ def parse_option():
                         help='warm-up for large batch training')
     parser.add_argument('--trial', type=str, default='0',
                         help='id for recording multiple runs')
-    parser.add_argument('--loss_mode', type=str, default='orth',
-            choices=['orth', 'l2_reg_ortho', 'unif'])
 
     opt = parser.parse_args()
-    
-    print('opts:')
-    print('reg', opt.reg)
-    print('freeze', opt.freeze)
-    print('warm ae', opt.warm_ae)
 
     # check if dataset is path that passed required arguments
     if opt.dataset == 'path':
@@ -105,17 +93,17 @@ def parse_option():
     # set the path according to the environment
     if opt.data_folder is None:
         opt.data_folder = './datasets/'
-    opt.model_path = './save/AL/{}_models'.format(opt.dataset)
-    opt.tb_path = './save/AL/{}_tensorboard'.format(opt.dataset)
+    opt.model_path = './save/SupCon/{}_models_fast'.format(opt.dataset)
+    opt.tb_path = './save/SupCon/{}_tensorboard'.format(opt.dataset)
 
     iterations = opt.lr_decay_epochs.split(',')
     opt.lr_decay_epochs = list([])
     for it in iterations:
         opt.lr_decay_epochs.append(int(it))
 
-    opt.model_name = '{}_{}_{}_lr_{}_decay_{}_bsz_{}_temp_{}_trial_{}_freeze_{}_warmae_{}_reg_{}'.\
+    opt.model_name = '{}_{}_{}_lr_{}_decay_{}_bsz_{}_temp_{}_trial_{}_fast'.\
         format(opt.method, opt.dataset, opt.model, opt.learning_rate,
-               opt.weight_decay, opt.batch_size, opt.temp, opt.trial, opt.freeze, opt.warm_ae, opt.reg)
+               opt.weight_decay, opt.batch_size, opt.temp, opt.trial)
 
     if opt.cosine:
         opt.model_name = '{}_cosine'.format(opt.model_name)
@@ -137,22 +125,20 @@ def parse_option():
     opt.tb_folder = os.path.join(opt.tb_path, opt.model_name)
     if not os.path.isdir(opt.tb_folder):
         os.makedirs(opt.tb_folder)
-   
+
+    opt.save_folder = os.path.join(opt.model_path, opt.model_name)
+    if not os.path.isdir(opt.save_folder):
+        os.makedirs(opt.save_folder)
+
     config = {
             "model":opt.model,
             "dataset":opt.dataset,
             "lr":opt.learning_rate,
             "batch_size":opt.batch_size,
-            "freeze":opt.freeze,
-            "warm_ae":opt.warm_ae,
-            "reg":opt.reg,
-            "loss mode":opt.loss_mode
+            "method":opt.method
             }
-    wandb.init(project='SupCon_AL',config=config, entity='al-train')
 
-    opt.save_folder = os.path.join(opt.model_path, opt.model_name)
-    if not os.path.isdir(opt.save_folder):
-        os.makedirs(opt.save_folder)
+    wandb.init(project='SupCon_pretrain_Fast',config=config, entity='al-train')
 
     return opt
 
@@ -183,25 +169,13 @@ def set_loader(opt):
         normalize,
     ])
 
-    test_transform = transforms.Compose([
-        transforms.ToTensor(),
-        normalize,
-    ])
-
     if opt.dataset == 'cifar10':
         train_dataset = datasets.CIFAR10(root=opt.data_folder,
-                                         transform=train_transform,
+                                         transform=TwoCropTransform(train_transform),
                                          download=True)
-        test_dataset = datasets.CIFAR10(root=opt.data_folder, train=False,
-                                         transform=test_transform,
-                                         download=True)
-
     elif opt.dataset == 'cifar100':
         train_dataset = datasets.CIFAR100(root=opt.data_folder,
-                                          transform=train_transform,
-                                          download=True)
-        test_dataset = datasets.CIFAR100(root=opt.data_folder, train=False,
-                                          transform=test_transform,
+                                          transform=TwoCropTransform(train_transform),
                                           download=True)
     elif opt.dataset == 'path':
         train_dataset = datasets.ImageFolder(root=opt.data_folder,
@@ -213,17 +187,13 @@ def set_loader(opt):
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=opt.batch_size, shuffle=(train_sampler is None),
         num_workers=opt.num_workers, pin_memory=True, sampler=train_sampler)
-    test_loader = torch.utils.data.DataLoader(
-        test_dataset, batch_size=64, shuffle=False,
-        num_workers=opt.num_workers, pin_memory=True
-    )
 
-    return train_loader, test_loader
+    return train_loader
 
 
 def set_model(opt):
-    model = ALResNet(name=opt.model)
-    criterion = MetricLoss(temperature=opt.temp, mode=opt.loss_mode)
+    model = SupConResNet(name=opt.model)
+    criterion = SupConLoss(temperature=opt.temp)
 
     # enable synchronized Batch Normalization
     if opt.syncBN:
@@ -242,7 +212,7 @@ def set_model(opt):
 def train(train_loader, model, criterion, optimizer, epoch, opt):
     """one epoch training"""
     model.train()
-    loss_data = {"reg_loss":[], "cont_loss":[], "ce_loss":[]}
+
     batch_time = AverageMeter()
     data_time = AverageMeter()
     losses = AverageMeter()
@@ -251,7 +221,7 @@ def train(train_loader, model, criterion, optimizer, epoch, opt):
     for idx, (images, labels) in enumerate(train_loader):
         data_time.update(time.time() - end)
 
-        # images = torch.cat([images[0], images[1]], dim=0)
+        images = torch.cat([images[0], images[1]], dim=0)
         if torch.cuda.is_available():
             images = images.cuda(non_blocking=True)
             labels = labels.cuda(non_blocking=True)
@@ -259,22 +229,21 @@ def train(train_loader, model, criterion, optimizer, epoch, opt):
 
         # warm-up learning rate
         warmup_learning_rate(opt, epoch, idx, len(train_loader), optimizer)
-        
-        # metric learning right here, bro
+
         # compute loss
-        x_emb, y_emb, y_pred, lab_emb = model(images, labels, mode='ml')
-
-        loss_dict = criterion(x_emb, y_emb, y_pred, lab_emb, labels)
-        loss = (1-opt.reg)*loss_dict['cont_loss']
-        loss += opt.reg*loss_dict['reg_loss']
-        if opt.freeze is False:
-            loss += loss_dict['ce_loss']
-        
-        # store loss data
-        loss_data["reg_loss"].append(loss_dict["reg_loss"].item())
-        loss_data["ce_loss"].append(loss_dict["ce_loss"].item())
-        loss_data["cont_loss"].append(loss_dict["cont_loss"].item())
-
+        big_loss = 0
+        sub_features = model(images)
+        for features in sub_features:
+            f1, f2 = torch.split(features, [bsz, bsz], dim=0)
+            features = torch.cat([f1.unsqueeze(1), f2.unsqueeze(1)], dim=1)
+            if opt.method == 'SupCon':
+                big_loss += criterion(features, labels)
+            elif opt.method == 'SimCLR':
+                big_loss += criterion(features)
+            else:
+                raise ValueError('contrastive method not supported: {}'.
+                                format(opt.method))
+        loss = big_loss/len(sub_features)
         # update metric
         losses.update(loss.item(), bsz)
 
@@ -297,69 +266,23 @@ def train(train_loader, model, criterion, optimizer, epoch, opt):
                    data_time=data_time, loss=losses))
             sys.stdout.flush()
 
-    return losses.avg, loss_data
+    return losses.avg
 
-def test(test_loader, model):
-    """test data"""
-    model.eval()
-    total_correct, total_sample = 0,0
-    top1, top5 = [], []
-
-    for idx, (images, labels) in enumerate(test_loader):
-        images, labels = images.cuda(), labels.cuda()
-        with torch.no_grad():
-            pred = model(images, mode='inf')
-        acc1, acc5 = accuracy(pred, labels, topk=(1,5))
-        top1.append(acc1[0].item())
-        top5.append(acc5[0].item())
-        # raise Exception('acc')
-        total_correct += (pred.argmax(-1) == labels).sum().item()
-        total_sample += images.size(0)
-    
-    return total_correct/total_sample, np.mean(top1), np.mean(top5)
 
 def main():
     opt = parse_option()
 
     # build data loader
-    train_loader, test_loader = set_loader(opt)
+    train_loader = set_loader(opt)
 
     # build model and criterion
     model, criterion = set_model(opt)
-    # wandb.watch_model
 
     # build optimizer
     optimizer = set_optimizer(opt, model)
 
     # tensorboard
     logger = tb_logger.Logger(logdir=opt.tb_folder, flush_secs=2)
-    print('logging at', opt.tb_folder)
-
-    if opt.warm_ae:
-        warm_loader = create_toy()
-        
-        for i in range(5000):
-            for data in warm_loader:
-                
-                optimizer.zero_grad()
-                data = data[0].cuda(non_blocking=True)
-                pred, lab_emb = model(y=data, mode='warm')
-                ce_loss = criterion.ce_loss(pred)
-                reg_loss = criterion.orth_reg(lab_emb)
-                loss = ce_loss + opt.reg*reg_loss
-
-                loss.backward()
-                optimizer.step()
-            wandb.log({'warm_up_ce_loss':ce_loss})
-            wandb.log({'warm_up_reg_loss':reg_loss})
-
-    if opt.freeze == True:
-        for param in model.y_enc.parameters():
-            param.requires_grad = False
-        for param in model.y_dec.parameters():
-            param.requires_grad = False
-
-    best_acc, best_epoch = -1, 0
 
     # training routine
     for epoch in range(1, opt.epochs + 1):
@@ -367,35 +290,20 @@ def main():
 
         # train for one epoch
         time1 = time.time()
-        loss, loss_data = train(train_loader, model, criterion, optimizer, epoch, opt)
+        loss = train(train_loader, model, criterion, optimizer, epoch, opt)
         time2 = time.time()
         print('epoch {}, total time {:.2f}'.format(epoch, time2 - time1))
-        test_acc, top1, top5 = test(test_loader, model)
-        
-        # tensorboard logger
-        
-        wandb.log({
-            "loss":loss,
-            "reg_loss":np.mean(loss_data['reg_loss']),
-            "ce_loss":np.mean(loss_data['ce_loss']),
-            "cont_loss":np.mean(loss_data['cont_loss']),
-            "learning_rate":optimizer.param_groups[0]['lr'],
-            "test_acc":test_acc*100,
-            "test top1":top1,
-            "test top5":top5
-            })
-        '''
-        logger.log_value('loss', loss, epoch)
-        logger.log_value('reg_loss', np.mean(loss_data['reg_loss']), epoch)
-        logger.log_value('ce_loss', np.mean(loss_data['ce_loss']), epoch)
-        logger.log_value('cont_loss', np.mean(loss_data['cont_loss']), epoch)
-        logger.log_value('learning_rate', optimizer.param_groups[0]['lr'], epoch)
-        logger.log_value('test_acc', test_acc, epoch)
-        '''
 
-        if test_acc > best_acc:
-            best_acc = test_acc
-            best_epoch = epoch
+        # tensorboard logger
+        logger.log_value('loss', loss, epoch)
+        logger.log_value('learning_rate', optimizer.param_groups[0]['lr'], epoch)
+
+        wandb.log({
+            "loss": loss,
+            "learning rate":optimizer.param_groups[0]['lr']
+            })
+
+        if epoch % opt.save_freq == 0:
             save_file = os.path.join(
                 opt.save_folder, 'ckpt_epoch_{epoch}.pth'.format(epoch=epoch))
             save_model(model, optimizer, opt, epoch, save_file)
@@ -404,8 +312,7 @@ def main():
     save_file = os.path.join(
         opt.save_folder, 'last.pth')
     save_model(model, optimizer, opt, opt.epochs, save_file)
-    print('best acc', best_acc)
-    print('best epoch', best_epoch)
+
 
 if __name__ == '__main__':
     main()

@@ -7,6 +7,7 @@ from __future__ import print_function
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import math
 
 class SupConLoss(nn.Module):
     """Supervised Contrastive Learning: https://arxiv.org/pdf/2004.11362.pdf.
@@ -98,7 +99,7 @@ class SupConLoss(nn.Module):
         return loss
 
 class MetricLoss(nn.Module):
-    def __init__(self, temperature=0.07, base_temperature=0.07, reg=False, dropout=0.1, mode='orth'):
+    def __init__(self, temperature=0.07, base_temperature=0.07, reg=False, dropout=0.1, mode='orth', end2end=False):
         super(MetricLoss, self).__init__()
 
         self.temperature = temperature
@@ -106,6 +107,7 @@ class MetricLoss(nn.Module):
         self.reg = reg
         self.drop_p = dropout
         self.cri = nn.BCELoss()
+        self.end2end = end2end
         self.mode = mode
 
     def forward(self, x_emb, y_emb, y_pred, lab_emb, tgt):
@@ -119,12 +121,14 @@ class MetricLoss(nn.Module):
         """
         if self.mode == 'orth':
             reg_loss = self.orth_reg(lab_emb)
-        elif self.mode = 'unif':
+        elif self.mode == 'unif':
             reg_loss = self.unif_reg(lab_emb)
-        elif self.mode = 'l2_reg_ortho':
+        elif self.mode == 'l2_reg_ortho':
             reg_loss = self.l2_reg_ortho(lab_emb)
-
-        contrastive_loss = self.cont_loss(x_emb, y_emb.detach())
+        if self.end2end:
+            contrastive_loss = self.cont_loss(x_emb, y_emb)
+        else:
+            contrastive_loss = self.cont_loss(x_emb, y_emb.detach())
         ce_loss = self.ce_loss(y_pred)
         data = {"reg_loss": reg_loss, "cont_loss":contrastive_loss, "ce_loss":ce_loss}
         return data
@@ -138,7 +142,15 @@ class MetricLoss(nn.Module):
         prod = torch.matmul(w, w.T)
         reg_loss = F.cross_entropy(prod, label)
         return reg_loss
-    
+   
+    def cont_loss2(self, x, y):
+        
+        x = F.normalize(x, dim=-1) # bsz, hid
+        y = F.normalize(y, dim=-1) # bsz, hid
+        logits = torch.div(torch.matmul(x, y.T) , self.temperature)
+        loss = F.binary_cross_entropy(logits, torch.ones(x.size(0).to(x.device)))
+        return loss
+
     def cont_loss(self, x, y):
         
         x = F.dropout(F.normalize(x, dim=-1), self.drop_p)
@@ -150,14 +162,14 @@ class MetricLoss(nn.Module):
         tgt = torch.arange(0, pred.size(-1), device=pred.device)
         return F.cross_entropy(pred, tgt)
 
-    def unif_reg(self, x):
+    def unif_reg(self, x, t=2):
         x = torch.transpose(x, 1,0)
         x = F.normalize(x, dim=-1)
-        return torch.pdist(x, p=2).pow(2).mul(-t).exp().mean().log()
+        return (torch.pdist(x, p=2).pow(2).mul(-t).exp().mean().log()+ 4)/4
 
     def l2_reg_ortho(self, W):
 
-	l2_reg = None
+        l2_reg = None
         W = torch.transpose(W, 1,0)
         cols, rows = W.shape
         w1 = W.view(-1,cols)
@@ -171,6 +183,30 @@ class MetricLoss(nn.Module):
         v = F.normalize(torch.matmul(w_tmp.t(), u), dim=0, eps=1e-12)
         u = F.normalize(torch.matmul(w_tmp, v), dim=0, eps=1e-12)
         sigma = torch.dot(u, torch.matmul(w_tmp, v))
-
         l2_reg = (sigma)**2
-	return l2_reg
+        return l2_reg
+
+    
+    def isotropy(self, embeddings):
+        """
+        Computes isotropy score.
+        Defined in Section 5.1, equations (7) and (8) of the paper.
+        Args:
+            embeddings: word vectors of shape (n_type_of_data, n_dimensions)
+        Returns:
+            float: isotropy score
+        """
+        min_z = math.inf
+        max_z = -math.inf
+
+        eigen_values, eigen_vectors = torch.linalg.eig(torch.matmul(embeddings.T, embeddings))
+        
+        for i in range(eigen_vectors.shape[1]):
+            z_c = torch.matmul(embeddings, eigen_vectors[:, i].unsqueeze(1))
+            z_c = torch.exp(z_c)
+            z_c = torch.sum(z_c)
+            min_z = torch.min(z_c, min_z)
+            max_z = torch.max(z_c, max_z)
+
+        return min_z/max_z
+
