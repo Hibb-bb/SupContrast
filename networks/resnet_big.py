@@ -185,7 +185,6 @@ class SupConResNet(nn.Module):
         feat = F.normalize(self.head(feat), dim=1)
         return feat
 
-
 class SupCEResNet(nn.Module):
     """encoder + classifier"""
     def __init__(self, name='resnet50', num_classes=10):
@@ -230,10 +229,10 @@ class ALResNet(nn.Module):
         elif mode == 'ml':
             """metric learning"""
             
-            y = F.one_hot(y).float().cuda()
+            y = F.one_hot(y, num_classes=self.num_classes).float().cuda()
             lab_emb = self.y_enc(self.one_hot)
             x_emb = self.head(self.encoder(x))
-            y_emb = self.y_enc(y).detach()
+            y_emb = self.y_enc(y)
             y_pred = self.y_dec(lab_emb)
             
             return x_emb, y_emb, y_pred, self.y_enc.weight

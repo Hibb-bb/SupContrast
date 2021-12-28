@@ -86,8 +86,8 @@ def parse_option():
                         help='warm-up for large batch training')
     parser.add_argument('--trial', type=str, default='0',
                         help='id for recording multiple runs')
-    parser.add_argument('--loss_mode', type=str, default='orth',
-            choices=['orth', 'l2_reg_ortho', 'unif'])
+    parser.add_argument('--loss_mode', type=str, default='unif',
+            choices=['orth', 'l2_reg_ortho', 'unif', 'iso', 'vicreg'])
 
     opt = parser.parse_args()
     
@@ -148,7 +148,7 @@ def parse_option():
             "reg":opt.reg,
             "loss mode":opt.loss_mode
             }
-    wandb.init(project='SupCon_AL',config=config, entity='al-train')
+    wandb.init(project='SupCon_AL_label_neg',config=config, entity='al-train')
 
     opt.save_folder = os.path.join(opt.model_path, opt.model_name)
     if not os.path.isdir(opt.save_folder):
@@ -336,9 +336,9 @@ def main():
     print('logging at', opt.tb_folder)
 
     if opt.warm_ae:
-        warm_loader = create_toy()
+        warm_loader = create_toy(10)
         
-        for i in range(5000):
+        for i in range(50):
             for data in warm_loader:
                 
                 optimizer.zero_grad()

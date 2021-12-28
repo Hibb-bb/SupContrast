@@ -99,7 +99,7 @@ class SupConLoss(nn.Module):
         return loss
 
 class MetricLoss(nn.Module):
-    def __init__(self, temperature=0.07, base_temperature=0.07, reg=False, dropout=0.1, mode='orth', end2end=False):
+    def __init__(self, temperature=0.07, base_temperature=0.07, reg=False, dropout=0.1, mode='unif', end2end=False):
         super(MetricLoss, self).__init__()
 
         self.temperature = temperature
@@ -108,7 +108,7 @@ class MetricLoss(nn.Module):
         self.drop_p = dropout
         self.cri = nn.BCELoss()
         self.end2end = end2end
-        self.mode = mode
+        self.mode = 'unif'
 
     def forward(self, x_emb, y_emb, y_pred, lab_emb, tgt):
 
@@ -125,16 +125,48 @@ class MetricLoss(nn.Module):
             reg_loss = self.unif_reg(lab_emb)
         elif self.mode == 'l2_reg_ortho':
             reg_loss = self.l2_reg_ortho(lab_emb)
+        elif self.mode == 'iso':
+            reg_loss = self.isotropy(lab_emb)
+
         if self.end2end:
-            contrastive_loss = self.cont_loss(x_emb, y_emb)
+            # contrastive_loss = self.vicreg(x_emb, y_emb)
+            contrastive_loss = self.cont_loss(x_emb, y_emb) + self.neg_label(x, tgt, lab_emb, lab_emb.size(1))
         else:
-            contrastive_loss = self.cont_loss(x_emb, y_emb.detach())
+            # contrastive_loss = self.vicreg(x_emb, y_emb)
+            contrastive_loss = self.cont_loss(x_emb, y_emb.detach()) + self.neg_label(x_emb, tgt, lab_emb, lab_emb.size(1))
+        
         ce_loss = self.ce_loss(y_pred)
         data = {"reg_loss": reg_loss, "cont_loss":contrastive_loss, "ce_loss":ce_loss}
         return data
 
-    def orth_reg(self, w):
+    def vicreg(self, z_a, z_b):
     
+        # invariance loss
+        sim_loss = F.mse_loss(z_a, z_b)
+        # variance loss
+        std_z_a = torch.sqrt(z_a.var(dim=0) + 1e-04)
+        std_z_b = torch.sqrt(z_b.var(dim=0) + 1e-04)
+        std_loss = torch.mean(F.relu(1 - std_z_a)) + torch.mean(F.relu(1 - std_z_b))
+        # covariance loss
+        N, D = z_a.size()
+ 
+        z1 = z_a - z_a.mean(dim=0)
+        z2 = z_b - z_b.mean(dim=0)
+        cov_z1 = (z1.T @ z1) / (N - 1)
+        cov_z2 = (z2.T @ z2) / (N - 1)
+
+        diag = torch.eye(D, device=z1.device)
+        cov_loss = cov_z1[~diag.bool()].pow_(2).sum() / D + cov_z2[~diag.bool()].pow_(2).sum() / D
+
+        return 1*cov_loss + 25*std_loss + 25*sim_loss
+
+    def align(self, x, y, alpha=2):
+        # x = F.normalize(x, dim=-1)
+        # y = F.normalize(y, dim=-1)
+        return (x - y).norm(p=2, dim=1).pow(alpha).mean()
+
+    def orth_reg(self, w):
+ 
         w = torch.transpose(w, 1,0)
         bsz = w.size(0)
         label = torch.arange(0, w.size(0)).to(w.device)
@@ -144,19 +176,30 @@ class MetricLoss(nn.Module):
         return reg_loss
    
     def cont_loss2(self, x, y):
-        
-        x = F.normalize(x, dim=-1) # bsz, hid
-        y = F.normalize(y, dim=-1) # bsz, hid
-        logits = torch.div(torch.matmul(x, y.T) , self.temperature)
-        loss = F.binary_cross_entropy(logits, torch.ones(x.size(0).to(x.device)))
+        # print(x.shape, y.shape) 
+        logits = (x*y).sum(-1)
+        # logits = torch.div(torch.matmul(x.T, y) , self.temperature)
+        tgt = torch.ones_like(logits).to(x.device)
+        loss = F.binary_cross_entropy(torch.sigmoid(logits), tgt)
         return loss
 
     def cont_loss(self, x, y):
         
-        x = F.dropout(F.normalize(x, dim=-1), self.drop_p)
-        y = F.dropout(F.normalize(y, dim=-1), self.drop_p)
+        x = F.normalize(x, dim=-1)
+        y = F.normalize(y, dim=-1)
         tgt = torch.ones(x.size(0), device=x.device)
         return F.cosine_embedding_loss(x, y.detach(), tgt)
+
+    def neg_label(self, x, label, lab_emb, class_num):
+        # x: batch, hid_dim
+        # lab_emb: class_num, hid_dim
+        x = F.normalize(x, dim=-1)
+        lab_emb = F.normalize(lab_emb, dim=0)
+        prod = torch.matmul(x, lab_emb) # batch, class_num
+        for i in range(label.size(0)):
+            prod[i][label[i]] = 0
+        prod = prod.mean().mean()
+        return prod
 
     def ce_loss(self, pred):
         tgt = torch.arange(0, pred.size(-1), device=pred.device)
@@ -185,7 +228,6 @@ class MetricLoss(nn.Module):
         sigma = torch.dot(u, torch.matmul(w_tmp, v))
         l2_reg = (sigma)**2
         return l2_reg
-
     
     def isotropy(self, embeddings):
         """

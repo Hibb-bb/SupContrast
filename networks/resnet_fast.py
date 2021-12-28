@@ -116,7 +116,7 @@ class ResNet(nn.Module):
     def do_shit(self, x):
         return torch.flatten(self.avgpool(x), 1)
 
-    def forward(self, x, layer=100):
+    def forward(self, x, layer=5):
         out1 = F.relu(self.bn1(self.conv1(x)))
         out2 = self.layer1(out1)
         out3 = self.layer2(out2)
@@ -124,7 +124,7 @@ class ResNet(nn.Module):
         out5 = self.layer4(out4)
         out5 = self.avgpool(out5)
         out5 = torch.flatten(out5, 1)
-        return self.do_shit(out1), self.do_shit(out2), self.do_shit(out3), self.do_shit(out4), out5
+        return [self.do_shit(out1), self.do_shit(out2), self.do_shit(out3), self.do_shit(out4), out5]
 
 
 def resnet18(**kwargs):
@@ -211,12 +211,16 @@ class SupCEResNet(nn.Module):
     """encoder + classifier"""
     def __init__(self, name='resnet50', num_classes=10):
         super(SupCEResNet, self).__init__()
+        self.num_classes=num_classes
         model_fun, dim_in = model_dict[name]
         self.encoder = model_fun()
-        self.fc = nn.Linear(dim_in, num_classes)
+        self.fcs = nn.ModuleList([nn.LazyLinear(num_classes)])
+        nn.Linear(dim_in, num_classes)
 
-    def forward(self, x):
-        return self.fc(self.encoder(x))
+    def forward(self, x, layer_idx=1):
+        enc = self.encoder(x)
+        return self.fc(enc[layer_idx])
+        # return self.fc(self.encoder(x))
 
 class ALResNet(nn.Module):
     def __init__(self, name='resnet50', num_classes=10, feat_dim=128):
@@ -234,6 +238,18 @@ class ALResNet(nn.Module):
         self.y_dec = nn.Linear(feat_dim, num_classes)
         self.num_classes = num_classes
         self.one_hot = F.one_hot(torch.arange(0, num_classes), num_classes=num_classes).float().cuda()
+        self.sub_heads = self._make_heads()
+
+    def _make_heads(self):
+        lst=[]
+        for _ in range(4):
+            a = nn.Sequential(
+                    nn.LazyLinear(512),
+                    nn.ReLU(inplace=True),
+                    nn.Linear(512, 128)
+                    )
+            lst.append(a)
+        return nn.ModuleList(lst)
 
     def forward(self, x=None, y=None, mode='ml'):
         assert mode in ['ml', 'warm', 'inf']
@@ -246,18 +262,21 @@ class ALResNet(nn.Module):
             # return pred, self.y_enc(self.one_hot.cuda())
 
         elif mode == 'inf':
-            return self.y_dec(self.head(self.encoder(x)))
+            return self.y_dec(self.head(self.encoder(x)[-1]))
         
         elif mode == 'ml':
             """metric learning"""
             
             y = F.one_hot(y).float().cuda()
             lab_emb = self.y_enc(self.one_hot)
-            x_emb = self.head(self.encoder(x))
+            x_embs = self.encoder(x)
+            x_embs[-1] = self.head(x_embs[-1])
+            for i in range(4):
+                x_embs[i] = self.sub_heads[i](x_embs[i])
             y_emb = self.y_enc(y).detach()
             y_pred = self.y_dec(lab_emb)
             
-            return x_emb, y_emb, y_pred, self.y_enc.weight
+            return x_embs, y_emb, y_pred, self.y_enc.weight
 
 class LinearClassifier(nn.Module):
     """Linear classifier"""
