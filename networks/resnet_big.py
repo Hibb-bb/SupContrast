@@ -197,7 +197,7 @@ class SupCEResNet(nn.Module):
         return self.fc(self.encoder(x))
 
 class ALResNet(nn.Module):
-    def __init__(self, name='resnet50', num_classes=10, feat_dim=128):
+    def __init__(self, name='resnet50', num_classes=100, feat_dim=128):
         super(ALResNet, self).__init__()
         model_fun, dim_in = model_dict[name]
         self.encoder = model_fun()

@@ -336,7 +336,7 @@ def main():
     print('logging at', opt.tb_folder)
 
     if opt.warm_ae:
-        warm_loader = create_toy(10)
+        warm_loader = create_toy(100)
         
         for i in range(50):
             for data in warm_loader:

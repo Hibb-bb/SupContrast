@@ -184,17 +184,17 @@ class MetricLoss(nn.Module):
         return loss
 
     def cont_loss(self, x, y):
-        
-        x = F.normalize(x, dim=-1)
-        y = F.normalize(y, dim=-1)
+         
+        x = F.dropout(F.normalize(x, dim=-1), 0.3)
+        y = F.dropout(F.normalize(y, dim=-1), 0.3)
         tgt = torch.ones(x.size(0), device=x.device)
         return F.cosine_embedding_loss(x, y.detach(), tgt)
 
     def neg_label(self, x, label, lab_emb, class_num):
         # x: batch, hid_dim
         # lab_emb: class_num, hid_dim
-        x = F.normalize(x, dim=-1)
-        lab_emb = F.normalize(lab_emb, dim=0)
+        x = F.dropout(F.normalize(x, dim=-1), 0.3)
+        lab_emb = F.dropout(F.normalize(lab_emb, dim=0), 0.3)
         prod = torch.matmul(x, lab_emb) # batch, class_num
         for i in range(label.size(0)):
             prod[i][label[i]] = 0
